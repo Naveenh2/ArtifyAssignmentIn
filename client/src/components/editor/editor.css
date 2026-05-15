@@ -1,0 +1,108 @@
+@reference "../../app/globals.css";
+
+/* Tiptap — Notion / Linear inspired typography */
+.tiptap-editor-shell {
+  @apply overflow-hidden rounded-xl border border-border/60 bg-background/40 shadow-inner backdrop-blur-sm;
+}
+
+.tiptap-editor-shell .tiptap-toolbar {
+  @apply sticky top-0 z-10 flex flex-wrap items-center gap-0.5 border-b border-border/60 bg-background/80 px-2 py-1.5 backdrop-blur-xl;
+}
+
+.tiptap-editor .ProseMirror {
+  @apply min-h-[420px] max-w-none px-4 py-4 text-[15px] leading-relaxed text-foreground outline-none;
+}
+
+.tiptap-editor .ProseMirror p.is-editor-empty:first-child::before {
+  @apply pointer-events-none float-left h-0 text-muted-foreground;
+  content: attr(data-placeholder);
+}
+
+.tiptap-editor .ProseMirror h1 {
+  @apply mb-4 mt-6 text-3xl font-semibold tracking-tight;
+}
+
+.tiptap-editor .ProseMirror h2 {
+  @apply mb-3 mt-5 text-2xl font-semibold tracking-tight;
+}
+
+.tiptap-editor .ProseMirror h3 {
+  @apply mb-2 mt-4 text-xl font-semibold;
+}
+
+.tiptap-editor .ProseMirror ul,
+.tiptap-editor .ProseMirror ol {
+  @apply my-2 pl-6;
+}
+
+.tiptap-editor .ProseMirror ul {
+  @apply list-disc;
+}
+
+.tiptap-editor .ProseMirror ol {
+  @apply list-decimal;
+}
+
+.tiptap-editor .ProseMirror ul[data-type="taskList"] {
+  @apply list-none pl-0;
+}
+
+.tiptap-editor .ProseMirror ul[data-type="taskList"] li {
+  @apply flex items-start gap-2;
+}
+
+.tiptap-editor .ProseMirror ul[data-type="taskList"] li > label {
+  @apply mt-1 flex items-center;
+}
+
+.tiptap-editor .ProseMirror blockquote {
+  @apply my-3 border-l-4 border-primary/40 pl-4 italic text-muted-foreground;
+}
+
+.tiptap-editor .ProseMirror pre {
+  @apply my-3 overflow-x-auto rounded-lg bg-muted/60 p-4 font-mono text-sm;
+}
+
+.tiptap-editor .ProseMirror code {
+  @apply rounded bg-muted/50 px-1 py-0.5 font-mono text-sm;
+}
+
+.tiptap-editor .ProseMirror hr {
+  @apply my-6 border-border;
+}
+
+.tiptap-editor .ProseMirror mark {
+  @apply rounded bg-yellow-200/80 px-0.5 dark:bg-yellow-500/30;
+}
+
+.tiptap-preview {
+  @apply min-h-[420px] px-4 py-4 text-[15px] leading-relaxed;
+}
+
+.tiptap-preview h1 {
+  @apply mb-4 text-3xl font-semibold;
+}
+
+.tiptap-preview h2 {
+  @apply mb-3 text-2xl font-semibold;
+}
+
+.tiptap-preview h3 {
+  @apply mb-2 text-xl font-semibold;
+}
+
+.tiptap-preview ul {
+  @apply my-2 list-disc pl-6;
+}
+
+.tiptap-preview ol {
+  @apply my-2 list-decimal pl-6;
+}
+
+.tiptap-preview blockquote {
+  @apply border-l-4 border-primary/40 pl-4 italic text-muted-foreground;
+}
+
+.tiptap-preview pre {
+  @apply overflow-x-auto rounded-lg bg-muted/60 p-4 font-mono text-sm;
+}

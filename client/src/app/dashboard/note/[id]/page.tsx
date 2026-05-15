@@ -3,9 +3,6 @@
 import * as React from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useDebouncedCallback } from "use-debounce";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import {
   Archive,
   ArrowLeft,
@@ -21,6 +18,9 @@ import { api } from "@/lib/api";
 import { notifyNotesChanged } from "@/lib/notes-events";
 import type { AiResult, Note } from "@/lib/types";
 import { useNoteSocket } from "@/lib/socket";
+import { useNoteAutosave } from "@/hooks/use-note-autosave";
+import { RichTextEditor, RichTextPreview } from "@/components/editor/rich-text-editor";
+import { SaveStatus } from "@/components/editor/save-status";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -30,9 +30,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 
-/**
- * Note workspace: autosave, markdown preview, AI assist, sharing, archive, optional Socket.io sync.
- */
+/** Note workspace with Tiptap rich text (HTML in DB), autosave, AI, share. */
 export default function NoteEditorPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
@@ -103,38 +101,32 @@ export default function NoteEditorPage() {
     [note, tagsInput]
   );
 
-  const debouncedSave = useDebouncedCallback(async () => {
-    if (!note) return;
-    try {
+  const autosaveWatchKey = React.useMemo(
+    () => JSON.stringify({ title, content, category }),
+    [title, content, category]
+  );
+
+  const { status: saveStatus, errorMessage: saveError, saveNow } = useNoteAutosave({
+    enabled: !!note && !loading,
+    watchKey: autosaveWatchKey,
+    delayMs: 2000,
+    onSave: async () => {
+      if (!note) return;
       await persist({ title, content, category: category || null });
       socket?.emit("note-delta", { noteId: note.id, title, content });
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Autosave failed");
-    }
-  }, 900);
-
-  React.useEffect(() => {
-    if (!note || loading) return;
-    debouncedSave();
-  }, [title, content, category, note, loading, debouncedSave]);
+    },
+  });
 
   React.useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
         e.preventDefault();
-        void (async () => {
-          try {
-            await persist({ title, content, category: category || null });
-            toast.success("Saved");
-          } catch (err) {
-            toast.error(err instanceof Error ? err.message : "Save failed");
-          }
-        })();
+        void saveNow().then(() => toast.success("Saved"));
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [persist, title, content, category]);
+  }, [saveNow]);
 
   async function runAi() {
     if (!note) return;
@@ -253,7 +245,8 @@ export default function NoteEditorPage() {
         {note.shareId && (
           <Badge className="border border-dashed border-primary/40 bg-primary/10 text-primary">Shared</Badge>
         )}
-        <div className="ml-auto flex flex-wrap gap-2">
+        <SaveStatus status={saveStatus} errorMessage={saveError} className="ml-auto sm:ml-0" />
+        <div className="flex w-full flex-wrap gap-2 sm:ml-auto sm:w-auto">
           <Button
             variant="secondary"
             className="gap-2 rounded-full"
@@ -347,26 +340,23 @@ export default function NoteEditorPage() {
           </div>
         </div>
         <Separator />
-        <Tabs defaultValue="write">
+        <Tabs defaultValue="edit">
           <TabsList>
-            <TabsTrigger value="write">Write</TabsTrigger>
-            <TabsTrigger value="preview">Markdown preview</TabsTrigger>
+            <TabsTrigger value="edit">Edit</TabsTrigger>
+            <TabsTrigger value="preview">Preview</TabsTrigger>
           </TabsList>
-          <TabsContent value="write" className="mt-4">
-            <textarea
-              className="min-h-[420px] w-full rounded-xl border border-border/60 bg-background/40 p-4 font-mono text-sm leading-relaxed shadow-inner backdrop-blur-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              value={content}
-              onChange={(e) => setContent(e.target.value)}
-              spellCheck={false}
+          <TabsContent value="edit" className="mt-4">
+            <RichTextEditor
+              editorKey={note.id}
+              content={content}
+              onChange={setContent}
+              placeholder="Start writing your note…"
             />
           </TabsContent>
           <TabsContent value="preview" className="mt-4">
-            <div className="mt-4 space-y-3 rounded-xl border border-border/60 bg-background/40 p-4 text-sm leading-relaxed [&_h1]:text-2xl [&_h1]:font-semibold [&_h2]:text-xl [&_h2]:font-semibold [&_li]:ml-4 [&_li]:list-disc [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-muted/50 [&_pre]:p-3">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{content || "_Nothing to preview yet._"}</ReactMarkdown>
-            </div>
+            <RichTextPreview html={content} />
           </TabsContent>
         </Tabs>
-        <p className="text-xs text-muted-foreground">Autosaves after you pause typing. Press ⌘/Ctrl + S to save immediately.</p>
       </Card>
     </div>
   );
