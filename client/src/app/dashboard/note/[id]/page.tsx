@@ -7,7 +7,10 @@ import {
   Archive,
   ArrowLeft,
   Ban,
+  Copy,
+  FilePlus2,
   Loader2,
+  RefreshCw,
   Share2,
   Sparkles,
   Trash2,
@@ -16,7 +19,8 @@ import {
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { notifyNotesChanged } from "@/lib/notes-events";
-import type { AiResult, Note } from "@/lib/types";
+import type { AiResult, Note, NoteAi } from "@/lib/types";
+import { countWordsFromHtml } from "@/lib/editor-html";
 import { useNoteSocket } from "@/lib/socket";
 import { useNoteAutosave } from "@/hooks/use-note-autosave";
 import { RichTextEditor, RichTextPreview } from "@/components/editor/rich-text-editor";
@@ -29,6 +33,25 @@ import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+
+function noteAiToResult(ai: NoteAi): AiResult {
+  return {
+    summary: ai.summary,
+    action_items: ai.action_items,
+    suggested_title: ai.suggested_title,
+    model: ai.model ?? undefined,
+    generated_at: ai.generatedAt,
+    from_cache: true,
+  };
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
 
 /** Note workspace with Tiptap rich text (HTML in DB), autosave, AI, share. */
 export default function NoteEditorPage() {
@@ -46,6 +69,7 @@ export default function NoteEditorPage() {
   const [aiResult, setAiResult] = React.useState<AiResult | null>(null);
   const [aiLoading, setAiLoading] = React.useState(false);
   const [aiError, setAiError] = React.useState<string | null>(null);
+  const aiContentSnapshot = React.useRef<string | null>(null);
 
   const load = React.useCallback(async () => {
     setLoading(true);
@@ -56,6 +80,17 @@ export default function NoteEditorPage() {
       setContent(n.content);
       setCategory(n.category ?? "");
       setTagsInput(n.tags.map((t) => t.name).join(", "));
+      if (n.ai && !n.ai.stale) {
+        setAiResult(noteAiToResult(n.ai));
+      } else {
+        setAiResult(null);
+      }
+      aiContentSnapshot.current = JSON.stringify({
+        title: n.title,
+        content: n.content,
+        category: n.category ?? "",
+        tags: n.tags.map((t) => t.name).sort(),
+      });
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to load note");
       router.push("/dashboard");
@@ -67,6 +102,23 @@ export default function NoteEditorPage() {
   React.useEffect(() => {
     void load();
   }, [load]);
+
+  React.useEffect(() => {
+    if (loading || !note?.ai || note.ai.stale) return;
+    const current = JSON.stringify({
+      title,
+      content,
+      category,
+      tags: tagsInput
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .sort(),
+    });
+    if (aiContentSnapshot.current && current !== aiContentSnapshot.current) {
+      setNote((n) => (n?.ai ? { ...n, ai: { ...n.ai, stale: true } } : n));
+    }
+  }, [title, content, category, tagsInput, loading, note?.ai]);
 
   React.useEffect(() => {
     if (!socket || !params.id) return;
@@ -128,22 +180,78 @@ export default function NoteEditorPage() {
     return () => window.removeEventListener("keydown", handler);
   }, [saveNow]);
 
-  async function runAi() {
-    if (!note) return;
-    setAiLoading(true);
+  const wordCount = countWordsFromHtml(content);
+  const canRunAi = wordCount >= 8;
+
+  function openAiDialog() {
     setAiOpen(true);
-    setAiResult(null);
     setAiError(null);
+    if (note?.ai && !note.ai.stale && !aiResult) {
+      setAiResult(noteAiToResult(note.ai));
+    }
+  }
+
+  async function runAi(regenerate = false) {
+    if (!note) return;
+    if (!canRunAi) {
+      toast.error("Write at least 8 words before generating a summary");
+      return;
+    }
+    setAiLoading(true);
+    setAiError(null);
+    if (regenerate) setAiResult(null);
     try {
-      const res = await api.generateSummary(note.id);
+      const res = await api.generateSummary(note.id, { regenerate });
       setAiResult(res);
+      setNote((n) =>
+        n
+          ? {
+              ...n,
+              ai: {
+                summary: res.summary,
+                action_items: res.action_items,
+                suggested_title: res.suggested_title,
+                generatedAt: res.generated_at ?? new Date().toISOString(),
+                model: res.model ?? null,
+                stale: false,
+              },
+            }
+          : n
+      );
+      aiContentSnapshot.current = JSON.stringify({
+        title,
+        content,
+        category,
+        tags: tagsInput
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .sort(),
+      });
     } catch (e) {
       const msg = e instanceof Error ? e.message : "AI request failed";
       setAiError(msg);
-      setAiResult(null);
+      if (regenerate) setAiResult(null);
     } finally {
       setAiLoading(false);
     }
+  }
+
+  async function copySummary() {
+    if (!aiResult?.summary) return;
+    await navigator.clipboard.writeText(aiResult.summary);
+    toast.success("Summary copied");
+  }
+
+  function insertSummaryIntoNote() {
+    if (!aiResult) return;
+    const items =
+      aiResult.action_items.length > 0
+        ? `<ul>${aiResult.action_items.map((i) => `<li>${escapeHtml(i)}</li>`).join("")}</ul>`
+        : "<p><em>No action items</em></p>";
+    const block = `<hr><h2>AI Summary</h2><p>${escapeHtml(aiResult.summary)}</p><h3>Action items</h3>${items}`;
+    setContent((c) => (c.trim() ? `${c}${block}` : `<p></p>${block}`));
+    toast.success("Summary inserted into note");
   }
 
   async function applySuggestedTitle() {
@@ -247,14 +355,7 @@ export default function NoteEditorPage() {
         )}
         <SaveStatus status={saveStatus} errorMessage={saveError} className="ml-auto sm:ml-0" />
         <div className="flex w-full flex-wrap gap-2 sm:ml-auto sm:w-auto">
-          <Button
-            variant="secondary"
-            className="gap-2 rounded-full"
-            onClick={() => {
-              setAiOpen(true);
-              void runAi();
-            }}
-          >
+          <Button variant="secondary" className="gap-2 rounded-full" onClick={openAiDialog}>
             <Sparkles className="h-4 w-4" /> AI assist
           </Button>
           <Dialog
@@ -264,18 +365,47 @@ export default function NoteEditorPage() {
               if (!open) setAiError(null);
             }}
           >
-            <DialogContent>
+            <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
               <DialogHeader>
                 <DialogTitle>AI insights</DialogTitle>
+                {aiResult?.generated_at && (
+                  <p className="text-xs text-muted-foreground">
+                    {aiResult.from_cache ? "Cached" : "Generated"}{" "}
+                    {new Date(aiResult.generated_at).toLocaleString()}
+                    {note.ai?.stale && " · note changed since last run"}
+                  </p>
+                )}
               </DialogHeader>
               {aiError ? (
-                <p className="text-sm text-muted-foreground">{aiError}</p>
+                <div className="space-y-3">
+                  <p className="text-sm text-destructive">{aiError}</p>
+                  <Button size="sm" variant="outline" onClick={() => void runAi(true)} disabled={!canRunAi || aiLoading}>
+                    Retry
+                  </Button>
+                </div>
               ) : aiLoading ? (
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin" /> Generating…
                 </div>
               ) : aiResult ? (
                 <div className="space-y-4 text-sm">
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" className="gap-1" onClick={() => void copySummary()}>
+                      <Copy className="h-3.5 w-3.5" /> Copy summary
+                    </Button>
+                    <Button size="sm" variant="outline" className="gap-1" onClick={insertSummaryIntoNote}>
+                      <FilePlus2 className="h-3.5 w-3.5" /> Insert into note
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="gap-1"
+                      onClick={() => void runAi(true)}
+                      disabled={!canRunAi || aiLoading}
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" /> Regenerate
+                    </Button>
+                  </div>
                   <div>
                     <p className="text-xs uppercase text-muted-foreground">Summary</p>
                     <p className="leading-relaxed">{aiResult.summary}</p>
@@ -299,7 +429,26 @@ export default function NoteEditorPage() {
                     </Button>
                   </div>
                 </div>
-              ) : null}
+              ) : (
+                <div className="space-y-4 text-sm">
+                  <p className="text-muted-foreground">
+                    Generate a summary, action items, and title suggestion from your note.
+                    {!canRunAi && " Add at least 8 words to enable AI."}
+                  </p>
+                  {note.ai?.stale && (
+                    <p className="text-xs text-amber-600 dark:text-amber-400">
+                      Your note changed since the last AI run. Regenerate for an updated summary.
+                    </p>
+                  )}
+                  <Button
+                    className="gap-2 rounded-full"
+                    disabled={!canRunAi || aiLoading}
+                    onClick={() => void runAi(false)}
+                  >
+                    <Sparkles className="h-4 w-4" /> Generate summary
+                  </Button>
+                </div>
+              )}
             </DialogContent>
           </Dialog>
           <Button variant="outline" className="gap-2 rounded-full" onClick={() => void share()}>

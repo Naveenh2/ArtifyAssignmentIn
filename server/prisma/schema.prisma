@@ -34,17 +34,23 @@ model Tag {
 }
 
 model Note {
-  id         String      @id @default(cuid())
-  title      String      @default("Untitled")
-  content    String      @default("")
-  archived   Boolean     @default(false)
-  category   String?
-  userId     String
-  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-  noteTags   NoteTag[]
-  shared     SharedNote?
-  createdAt  DateTime    @default(now())
-  updatedAt  DateTime    @updatedAt
+  id               String      @id @default(cuid())
+  title            String      @default("Untitled")
+  content          String      @default("")
+  archived         Boolean     @default(false)
+  category         String?
+  aiSummary        String?
+  aiActionItems    Json?
+  aiSuggestedTitle String?
+  aiContentHash    String?
+  aiGeneratedAt    DateTime?
+  aiModel          String?
+  userId           String
+  user             User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  noteTags         NoteTag[]
+  shared           SharedNote?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
 
   @@index([userId, updatedAt])
   @@index([userId, archived])
@@ -77,10 +83,12 @@ enum AIUsageType {
 model AIUsage {
   id        String      @id @default(cuid())
   userId    String
+  noteId    String?
   user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   type      AIUsageType
   model     String?
   createdAt DateTime    @default(now())
 
   @@index([userId, createdAt])
+  @@index([noteId])
 }

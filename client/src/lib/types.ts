@@ -1,5 +1,15 @@
 export type Tag = { id: string; name: string };
 
+export type NoteAi = {
+  summary: string;
+  action_items: string[];
+  suggested_title: string;
+  generatedAt: string;
+  model: string | null;
+  /** True when note body changed since last AI run */
+  stale: boolean;
+};
+
 export type Note = {
   id: string;
   title: string;
@@ -10,6 +20,7 @@ export type Note = {
   updatedAt: string;
   tags: Tag[];
   shareId: string | null;
+  ai: NoteAi | null;
 };
 
 export type AiResult = {
@@ -17,6 +28,8 @@ export type AiResult = {
   action_items: string[];
   suggested_title: string;
   model?: string;
+  from_cache?: boolean;
+  generated_at?: string | null;
 };
 
 export type Insights = {

@@ -28,6 +28,8 @@ export const env = {
   JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN ?? "7d",
   CLIENT_ORIGIN: process.env.CLIENT_ORIGIN ?? "http://localhost:3000",
   GEMINI_API_KEY: process.env.GEMINI_API_KEY ?? "",
+  /** Default works with current Google AI Studio keys (1.5-flash often returns 404). */
+  GEMINI_MODEL: process.env.GEMINI_MODEL ?? "gemini-2.5-flash",
   OPENAI_API_KEY: process.env.OPENAI_API_KEY ?? "",
   COOKIE_SECURE: process.env.COOKIE_SECURE === "true",
 };

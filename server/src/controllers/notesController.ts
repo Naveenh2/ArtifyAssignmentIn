@@ -4,7 +4,16 @@ import { nanoid } from "nanoid";
 import { prisma } from "../lib/prisma.js";
 import { AppError } from "../middleware/errorHandler.js";
 import { runCombinedAi } from "../services/aiService.js";
+import { assertAiRateLimit } from "../services/aiRateLimit.js";
+import {
+  buildNoteTextForAi,
+  countWords,
+  hashNoteForAi,
+  prepareNoteTextForAi,
+} from "../lib/noteText.js";
 import { AIUsageType } from "@prisma/client";
+
+const MIN_WORDS_FOR_AI = 8;
 
 function noteSelect() {
   return {
@@ -13,6 +22,12 @@ function noteSelect() {
     content: true,
     archived: true,
     category: true,
+    aiSummary: true,
+    aiActionItems: true,
+    aiSuggestedTitle: true,
+    aiContentHash: true,
+    aiGeneratedAt: true,
+    aiModel: true,
     createdAt: true,
     updatedAt: true,
     noteTags: { select: { tag: { select: { id: true, name: true } } } },
@@ -169,25 +184,76 @@ export async function generateSummary(req: Request, res: Response, next: NextFun
   try {
     const userId = req.user!.sub;
     const { id } = req.params;
-    const note = await prisma.note.findFirst({ where: { id, userId } });
+    const regenerate =
+      req.query.regenerate === "true" ||
+      (req.body as { regenerate?: boolean } | undefined)?.regenerate === true;
+
+    const note = (await prisma.note.findFirst({
+      where: { id, userId },
+      select: {
+        ...noteSelect(),
+      },
+    })) as NotePayload | null;
+
     if (!note) {
       throw new AppError(404, "Note not found");
     }
-    const text = `${note.title}\n\n${note.content}`.trim();
-    if (!text) {
-      throw new AppError(400, "Note is empty");
+
+    const tags = note.noteTags.map((nt) => nt.tag.name);
+    const contentHash = hashNoteForAi({
+      title: note.title,
+      content: note.content,
+      category: note.category,
+      tags,
+    });
+
+    if (
+      !regenerate &&
+      note.aiContentHash === contentHash &&
+      note.aiSummary &&
+      note.aiGeneratedAt
+    ) {
+      return res.json(buildAiResponse(note, true));
     }
 
-    const ai = await runCombinedAi(text);
+    const plain = buildNoteTextForAi({
+      title: note.title,
+      content: note.content,
+      category: note.category,
+      tags,
+    });
+    if (!plain || countWords(plain) < MIN_WORDS_FOR_AI) {
+      throw new AppError(400, `Note needs at least ${MIN_WORDS_FOR_AI} words for AI summary`);
+    }
+
+    await assertAiRateLimit(userId);
+
+    const { text: prepared, truncated } = prepareNoteTextForAi(plain);
+    const ai = await runCombinedAi(prepared, { truncated });
+
+    const updated = await prisma.note.update({
+      where: { id },
+      data: {
+        aiSummary: ai.summary,
+        aiActionItems: ai.action_items,
+        aiSuggestedTitle: ai.suggested_title,
+        aiContentHash: contentHash,
+        aiGeneratedAt: new Date(),
+        aiModel: ai.model,
+      },
+      select: noteSelect(),
+    });
+
     await prisma.aIUsage.create({
       data: {
         userId,
+        noteId: id,
         type: AIUsageType.COMBINED,
         model: ai.model,
       },
     });
 
-    return res.json(ai);
+    return res.json(buildAiResponse(updated as NotePayload, false));
   } catch (e) {
     next(e);
   }
@@ -366,7 +432,33 @@ async function syncTags(
   }
 }
 
+function parseActionItems(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((x): x is string => typeof x === "string");
+}
+
+function buildAiResponse(note: NotePayload, fromCache: boolean) {
+  return {
+    summary: note.aiSummary ?? "",
+    action_items: parseActionItems(note.aiActionItems),
+    suggested_title: note.aiSuggestedTitle ?? "Untitled",
+    model: note.aiModel ?? undefined,
+    from_cache: fromCache,
+    generated_at: note.aiGeneratedAt?.toISOString() ?? null,
+  };
+}
+
 function serializeNote(note: NotePayload) {
+  const tags = note.noteTags.map((nt) => nt.tag);
+  const tagNames = tags.map((t) => t.name);
+  const currentHash = hashNoteForAi({
+    title: note.title,
+    content: note.content,
+    category: note.category,
+    tags: tagNames,
+  });
+  const hasAi = Boolean(note.aiSummary && note.aiGeneratedAt);
+
   return {
     id: note.id,
     title: note.title,
@@ -375,7 +467,17 @@ function serializeNote(note: NotePayload) {
     category: note.category,
     createdAt: note.createdAt,
     updatedAt: note.updatedAt,
-    tags: note.noteTags.map((nt) => nt.tag),
+    tags,
     shareId: note.shared?.shareId ?? null,
+    ai: hasAi
+      ? {
+          summary: note.aiSummary!,
+          action_items: parseActionItems(note.aiActionItems),
+          suggested_title: note.aiSuggestedTitle ?? "Untitled",
+          generatedAt: note.aiGeneratedAt!.toISOString(),
+          model: note.aiModel,
+          stale: note.aiContentHash !== currentHash,
+        }
+      : null,
   };
 }

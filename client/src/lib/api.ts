@@ -82,8 +82,11 @@ export const api = {
   patchNote: (id: string, body: Record<string, unknown>) =>
     backendFetch<{ note: Note }>(`/notes/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   deleteNote: (id: string) => backendFetch<void>(`/notes/${id}`, { method: "DELETE" }),
-  generateSummary: (id: string) =>
-    backendFetch<AiResult>(`/notes/${id}/generate-summary`, { method: "POST" }),
+  generateSummary: (id: string, opts?: { regenerate?: boolean }) =>
+    backendFetch<AiResult>(`/notes/${id}/generate-summary`, {
+      method: "POST",
+      body: JSON.stringify({ regenerate: opts?.regenerate ?? false }),
+    }),
   shareNote: (id: string) =>
     backendFetch<{ shareId: string; publicUrl: string }>(`/notes/${id}/share`, { method: "POST" }),
   revokeShare: (id: string) => backendFetch<void>(`/notes/${id}/share`, { method: "DELETE" }),
